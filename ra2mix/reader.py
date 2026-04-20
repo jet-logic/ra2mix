@@ -170,5 +170,5 @@ def extract(mix_filepath: str, folder_path: str) -> None:
 
     for filename, file_data in file_map.items():
         # print(f"Creating {filename}")
-        with open(os.path.join(folder_path)) as fp:
+        with open(os.path.join(folder_path, filename), "wb") as fp:
             fp.write(file_data)
