@@ -1,14 +1,9 @@
 #!/usr/bin/env python
 
-from base64 import b64encode
-import struct
-import blowfish
-from . import cccrypto
-from .checksum import ra2_crc
-from .reader import gmd
 
-
-def list_stream(fp, out, id_name_map, sort_offset=""):
+def list_stream(
+    fp: "IO[bytes]", out: "IO", id_name_map={}, sort_offset="", file_offset=0
+):
     file_count = struct.unpack("<H", fp.read(2))[0]
     flags = 0
     if file_count:  # old
@@ -29,13 +24,10 @@ def list_stream(fp, out, id_name_map, sort_offset=""):
             )
             data_decrypted = b"".join(cipher.decrypt_ecb(fp.read(decrypt_size)))
             index_data = decrypted_block[-2:] + data_decrypted[:-padding_size]
-            # print(
-            #     f"Encrypted: {b64encode(decrypted_blowfish_key).decode('utf-8'):s}",
-            #     file=out,
-            # )
         else:
             file_count, data_size = struct.unpack("<HI", fp.read(2 + 4))
             index_data = fp.read(4 * 3 * file_count)
+    body_start = fp.tell()
 
     def sflag(n):
         if n & 1:
@@ -46,6 +38,7 @@ def list_stream(fp, out, id_name_map, sort_offset=""):
             yield hex(n)
 
     max_offset = max_size = 0
+    id_filename_map = {}
     entries = []
     for i in range(file_count):
         o = i * 4 * 3
@@ -53,6 +46,14 @@ def list_stream(fp, out, id_name_map, sort_offset=""):
         max_offset = max(max_offset, offset)
         max_size = max(max_size, size)
         entries.append((id & 0xFFFFFFFF, offset, size, i))
+        if id == MIX_DB_ID:
+            fp.seek(file_offset + body_start + offset)
+            local_mix_db_blob = fp.read()
+            filenames = get_filenames_from_mix_db(local_mix_db_blob)
+            id_filename_map.update(
+                {ra2_crc(filename) & 0xFFFFFFFF: filename for filename in filenames}
+            )
+
     if sort_offset:
         entries.sort(key=lambda v: v[1], reverse=(sort_offset[0] == "d"))
     pad_nth = len(str(file_count))
@@ -66,7 +67,7 @@ def list_stream(fp, out, id_name_map, sort_offset=""):
     for id, offset, size, i in entries:
         print(
             f"{(i+1):>{pad_nth}} {id:08X} {offset:>{pad_offset}} {size:>{pad_size}}",
-            id_name_map.get(id) or "",
+            id_filename_map.get(id) or id_name_map.get(id) or "",
             file=out,
         )
     print(
@@ -92,12 +93,7 @@ def main():
     args = parser.parse_args()
 
     names = set(gmd.keys())
-    names.add("grfixn08.ubn")
     id_name_map = dict((ra2_crc(filename) & 0xFFFFFFFF, filename) for filename in names)
-    # map2 = dict(
-    #     (filename.partition("."), ra2_crc(filename) & 0xFFFFFFFF)
-    #     for filename in gmd.keys()
-    # )
     sname = set()
     sext = set()
     for filename in gmd.keys():
@@ -118,13 +114,17 @@ def main():
                 list_stream(fh, stdout, id_name_map, sort_offset=args.sort_offset)
         except BrokenPipeError:
             break
-        except Exception as e:
-            print(f"Error reading MIX file: {e}", file=stderr)
+        # except Exception as e:
+        #     print(f"Error in file: {e}", file=stderr)
 
 
 if __name__ == "__main__":
-    import sys
+    import struct
+    import blowfish
+    from typing import IO
+    from . import const, cccrypto
+    from .checksum import ra2_crc
+    from .reader import get_filenames_from_mix_db, gmd
 
-    # Add the parent directory to the Python path to import ra2mix
-    # sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    MIX_DB_ID = ra2_crc(const.MIX_DB_FILENAME)
     main()
