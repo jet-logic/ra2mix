@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 
 
+from sys import stderr
+
+
 def list_stream(
     fp: "IO[bytes]", out: "IO", id_name_map={}, sort_offset="", file_offset=0
 ):
@@ -49,10 +52,19 @@ def list_stream(
         if id == MIX_DB_ID:
             fp.seek(file_offset + body_start + offset)
             local_mix_db_blob = fp.read()
-            filenames = get_filenames_from_mix_db(local_mix_db_blob)
-            id_filename_map.update(
-                {ra2_crc(filename) & 0xFFFFFFFF: filename for filename in filenames}
-            )
+            try:
+                filenames = [
+                    x.decode("latin1")
+                    for x in local_mix_db_blob[const.XCC_HEADER_SIZE :].split(b"\x00")
+                ]
+                filenames and id_filename_map.update(
+                    {ra2_crc(filename) & 0xFFFFFFFF: filename for filename in filenames}
+                )
+            except Exception as ex:
+                print(
+                    f"Failed to get_filenames_from_mix_db : {ex}",
+                    file=stderr,
+                )
 
     if sort_offset:
         entries.sort(key=lambda v: v[1], reverse=(sort_offset[0] == "d"))
