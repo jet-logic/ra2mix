@@ -62,7 +62,7 @@ def list_stream(
                 )
             except Exception as ex:
                 print(
-                    f"Failed to get_filenames_from_mix_db : {ex}",
+                    f"Failed to get local filenames db : {ex}",
                     file=stderr,
                 )
 
@@ -77,9 +77,10 @@ def list_stream(
         file=out,
     )
     for id, offset, size, i in entries:
+        fname = id_filename_map.get(id) or id_name_map.get(id) or f"_{id:08X}"
         print(
             f"{(i+1):>{pad_nth}} {id:08X} {offset:>{pad_offset}} {size:>{pad_size}}",
-            id_filename_map.get(id) or id_name_map.get(id) or "",
+            fname,
             file=out,
         )
     print(
