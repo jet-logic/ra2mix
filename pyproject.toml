@@ -20,3 +20,6 @@ classifiers = [
 
 [project.urls]
 "Homepage" = "https://github.com/endless-creation/ra2mix"
+
+[project.scripts]
+ra2mix = "ra2mix.__main__:main"
