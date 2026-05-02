@@ -3,25 +3,11 @@ from pathlib import Path
 from sys import stderr, stdin
 from blowfish import Cipher
 from struct import pack, unpack
+
+from .utils import as_sink, as_source
 from .utils import decrypt_blowfish_key_fast, names_db_enum, ra2_crc_fast
 
 names_db_filename = "local mix database.dat"
-
-
-def as_sink(path="-", mode="wb"):
-    if path and path != "-":
-        return open(path, mode)
-    from sys import stdout
-
-    return stdout.buffer if "b" in mode else stdout
-
-
-def as_source(path="-", mode="rb"):
-    if path and path != "-":
-        return open(path, mode)
-    from sys import stdin
-
-    return stdin.buffer if "b" in mode else stdin
 
 
 def create(mix_file="file.mix", files=[""], names_db=None, game=5, _what="c"):
@@ -48,11 +34,13 @@ def create(mix_file="file.mix", files=[""], names_db=None, game=5, _what="c"):
     # build the local filenames db
     if names_db is not False and not file_map.get(names_db_filename):
         # db_data = get_mix_db_data(list(file_map.keys()), game)
-        db_data = b''.join(names_db_enum(list(file_map.keys()), game))
+        file_map[names_db_filename] = (None, None)
+        db_data = b"".join(names_db_enum(list(file_map.keys()), game))
         file_map[names_db_filename] = (db_data, len(db_data))
     # build the file data map
     data_map = sorted(
-        [(ra2_crc_fast(k), (*v, k)) for k, v in file_map.items()], key=(lambda id, *_: id)
+        [(ra2_crc_fast(k), (*v, k)) for k, v in file_map.items()],
+        key=(lambda id, *_: id),
     )
     # build the mix file
     flags = 0
@@ -103,13 +91,11 @@ def walk(
         flags = unpack("<H", fp.read(2))[0]
         if (flags & 0x2) != 0:
             encrypted_blowfish_key = fp.read(80)
-            decrypted_blowfish_key = decrypt_blowfish_key_fast(
-                encrypted_blowfish_key
-            )
+            decrypted_blowfish_key = decrypt_blowfish_key_fast(encrypted_blowfish_key)
             cipher = Cipher(decrypted_blowfish_key)
             decrypted_block = cipher.decrypt_block(fp.read(8))
             (file_count, data_size, _) = unpack("<HIH", decrypted_block)
-            remaining = (file_count * (4*3)) - 2
+            remaining = (file_count * (4 * 3)) - 2
             padding = 8 - remaining % 8
             data_decrypted = b"".join(cipher.decrypt_ecb(fp.read(remaining + padding)))
             index_data = decrypted_block[-2:] + data_decrypted[:-padding]
@@ -143,7 +129,10 @@ def walk(
                     x.decode("latin1") for x in local_mix_db_blob[52:].split(b"\x00")
                 ]
                 filenames and id_filename_map.update(
-                    {ra2_crc_fast(filename) & 0xFFFFFFFF: filename for filename in filenames}
+                    {
+                        ra2_crc_fast(filename) & 0xFFFFFFFF: filename
+                        for filename in filenames
+                    }
                 )
             except Exception as ex:
                 print(
@@ -198,7 +187,9 @@ def list_files(mix_files=[], sort_offset="", extract_dir="", _what=""):
 
     MIX_DB_ID = ra2_crc_fast(names_db_filename)
     names = set(gmd.keys())
-    id_name_map = dict((ra2_crc_fast(filename) & 0xFFFFFFFF, filename) for filename in names)
+    id_name_map = dict(
+        (ra2_crc_fast(filename) & 0xFFFFFFFF, filename) for filename in names
+    )
     sname = set()
     sext = set()
     for filename in gmd.keys():
