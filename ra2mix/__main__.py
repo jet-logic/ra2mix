@@ -3,9 +3,9 @@ from pathlib import Path
 from sys import stderr, stdin
 from blowfish import Cipher
 from struct import pack, unpack
-from . import cccrypto, const
-from .checksum import ra2_crc
-from .writer import get_mix_db_data
+from .utils import decrypt_blowfish_key_fast, names_db_enum, ra2_crc_fast
+
+names_db_filename = "local mix database.dat"
 
 
 def as_sink(path="-", mode="wb"):
@@ -24,10 +24,9 @@ def as_source(path="-", mode="rb"):
     return stdin.buffer if "b" in mode else stdin
 
 
-def create(mix_file="file.mix", files=[""], names_db=None, _what="c"):
+def create(mix_file="file.mix", files=[""], names_db=None, game=5, _what="c"):
     from shutil import copyfileobj
 
-    game: const.XCCGame = const.XCCGame.RA2
     file_map: dict[str, tuple[str, int]] = {}
 
     def add_path(f=""):
@@ -47,12 +46,13 @@ def create(mix_file="file.mix", files=[""], names_db=None, _what="c"):
         else:
             add_path(f)
     # build the local filenames db
-    if names_db is not False and not file_map.get(const.MIX_DB_FILENAME):
-        db_data = get_mix_db_data(list(file_map.keys()), game)
-        file_map[const.MIX_DB_FILENAME] = (db_data, len(db_data))
+    if names_db is not False and not file_map.get(names_db_filename):
+        # db_data = get_mix_db_data(list(file_map.keys()), game)
+        db_data = b''.join(names_db_enum(list(file_map.keys()), game))
+        file_map[names_db_filename] = (db_data, len(db_data))
     # build the file data map
     data_map = sorted(
-        [(ra2_crc(k), (*v, k)) for k, v in file_map.items()], key=(lambda id, *_: id)
+        [(ra2_crc_fast(k), (*v, k)) for k, v in file_map.items()], key=(lambda id, *_: id)
     )
     # build the mix file
     flags = 0
@@ -103,17 +103,16 @@ def walk(
         flags = unpack("<H", fp.read(2))[0]
         if (flags & 0x2) != 0:
             encrypted_blowfish_key = fp.read(80)
-            decrypted_blowfish_key = cccrypto.decrypt_blowfish_key(
+            decrypted_blowfish_key = decrypt_blowfish_key_fast(
                 encrypted_blowfish_key
             )
             cipher = Cipher(decrypted_blowfish_key)
             decrypted_block = cipher.decrypt_block(fp.read(8))
             (file_count, data_size, _) = unpack("<HIH", decrypted_block)
-            decrypt_size, padding_size = cccrypto.get_decryption_block_sizing(
-                file_count
-            )
-            data_decrypted = b"".join(cipher.decrypt_ecb(fp.read(decrypt_size)))
-            index_data = decrypted_block[-2:] + data_decrypted[:-padding_size]
+            remaining = (file_count * (4*3)) - 2
+            padding = 8 - remaining % 8
+            data_decrypted = b"".join(cipher.decrypt_ecb(fp.read(remaining + padding)))
+            index_data = decrypted_block[-2:] + data_decrypted[:-padding]
         else:
             file_count, data_size = unpack("<HI", fp.read(2 + 4))
             index_data = fp.read(4 * 3 * file_count)
@@ -141,11 +140,10 @@ def walk(
             local_mix_db_blob = fp.read()
             try:
                 filenames = [
-                    x.decode("latin1")
-                    for x in local_mix_db_blob[const.XCC_HEADER_SIZE :].split(b"\x00")
+                    x.decode("latin1") for x in local_mix_db_blob[52:].split(b"\x00")
                 ]
                 filenames and id_filename_map.update(
-                    {ra2_crc(filename) & 0xFFFFFFFF: filename for filename in filenames}
+                    {ra2_crc_fast(filename) & 0xFFFFFFFF: filename for filename in filenames}
                 )
             except Exception as ex:
                 print(
@@ -198,9 +196,9 @@ def list_files(mix_files=[], sort_offset="", extract_dir="", _what=""):
     from sys import stdout
     from .reader import gmd
 
-    MIX_DB_ID = ra2_crc(const.MIX_DB_FILENAME)
+    MIX_DB_ID = ra2_crc_fast(names_db_filename)
     names = set(gmd.keys())
-    id_name_map = dict((ra2_crc(filename) & 0xFFFFFFFF, filename) for filename in names)
+    id_name_map = dict((ra2_crc_fast(filename) & 0xFFFFFFFF, filename) for filename in names)
     sname = set()
     sext = set()
     for filename in gmd.keys():
@@ -210,7 +208,7 @@ def list_files(mix_files=[], sort_offset="", extract_dir="", _what=""):
     for x in sext:
         for n in sname:
             f = f"{n}.{x}"
-            g = ra2_crc(f)
+            g = ra2_crc_fast(f)
             id_name_map[g & 0xFFFFFFFF] = f
     for i, mix_file in enumerate(mix_files):
         if i > 0:
